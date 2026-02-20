@@ -22,20 +22,19 @@ class VideoRequest(BaseModel):
 url: str
 secret: str
 
-@app.get(”/health”)
+@app.get("/health")
 def health():
-return {“status”: “ok”}
+return {"status": "ok"}
 
-@app.post(”/transcribe”)
+@app.post("/transcribe")
 def transcribe(req: VideoRequest):
 if SERVICE_SECRET and req.secret != SERVICE_SECRET:
-raise HTTPException(status_code=401, detail=“Unauthorized”)
+raise HTTPException(status_code=401, detail="Unauthorized")
 
 ```
 with tempfile.TemporaryDirectory() as tmpdir:
     audio_path = os.path.join(tmpdir, "audio.mp3")
 
-    # Download audio with yt-dlp
     result = subprocess.run([
         "yt-dlp",
         "--extract-audio",
@@ -50,7 +49,6 @@ with tempfile.TemporaryDirectory() as tmpdir:
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Download failed: {result.stderr[:300]}")
 
-    # Find output file
     mp3_file = audio_path
     if not os.path.exists(mp3_file):
         mp3_file = audio_path + ".mp3"
@@ -60,7 +58,6 @@ with tempfile.TemporaryDirectory() as tmpdir:
             raise HTTPException(status_code=400, detail="No audio downloaded")
         mp3_file = os.path.join(tmpdir, files[0])
 
-    # Transcribe with OpenAI Whisper API
     openai_client = OpenAI(api_key=OPENAI_API_KEY)
     with open(mp3_file, "rb") as audio_file:
         transcription = openai_client.audio.transcriptions.create(
@@ -69,7 +66,6 @@ with tempfile.TemporaryDirectory() as tmpdir:
         )
     transcript_text = transcription.text.strip()
 
-    # Get video description
     desc_result = subprocess.run([
         "yt-dlp", "--skip-download", "--print", "%(description)s",
         "--no-playlist", req.url
