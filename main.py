@@ -4,7 +4,7 @@ import subprocess
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from faster_whisper import WhisperModel
+from openai import OpenAI
 
 app = FastAPI()
 
@@ -15,11 +15,8 @@ allow_methods=[”*”],
 allow_headers=[”*”],
 )
 
-# Load model once on startup
-
-model = WhisperModel(“base”, device=“cpu”, compute_type=“int8”)
-
 SERVICE_SECRET = os.environ.get(“SERVICE_SECRET”, “”)
+OPENAI_API_KEY = os.environ.get(“OPENAI_API_KEY”, “”)
 
 class VideoRequest(BaseModel):
 url: str
@@ -38,19 +35,20 @@ raise HTTPException(status_code=401, detail=“Unauthorized”)
 with tempfile.TemporaryDirectory() as tmpdir:
     audio_path = os.path.join(tmpdir, "audio.mp3")
 
+    # Download audio with yt-dlp
     result = subprocess.run([
         "yt-dlp",
         "--extract-audio",
         "--audio-format", "mp3",
-        "--audio-quality", "0",
+        "--audio-quality", "5",
         "--output", audio_path,
         "--no-playlist",
-        "--max-filesize", "50m",
+        "--max-filesize", "25m",
         req.url
     ], capture_output=True, text=True, timeout=120)
 
     if result.returncode != 0:
-        raise HTTPException(status_code=400, detail=f"Download failed: {result.stderr}")
+        raise HTTPException(status_code=400, detail=f"Download failed: {result.stderr[:300]}")
 
     # Find output file
     mp3_file = audio_path
@@ -59,24 +57,28 @@ with tempfile.TemporaryDirectory() as tmpdir:
     if not os.path.exists(mp3_file):
         files = os.listdir(tmpdir)
         if not files:
-            raise HTTPException(status_code=400, detail="No audio file downloaded")
+            raise HTTPException(status_code=400, detail="No audio downloaded")
         mp3_file = os.path.join(tmpdir, files[0])
 
-    # Transcribe
-    segments, _ = model.transcribe(mp3_file)
-    transcript_text = " ".join([seg.text for seg in segments]).strip()
+    # Transcribe with OpenAI Whisper API
+    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    with open(mp3_file, "rb") as audio_file:
+        transcription = openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+        )
+    transcript_text = transcription.text.strip()
 
-    # Get description
+    # Get video description
     desc_result = subprocess.run([
         "yt-dlp", "--skip-download", "--print", "%(description)s",
         "--no-playlist", req.url
     ], capture_output=True, text=True, timeout=30)
-
-    description = desc_result.stdout.strip() if desc_result.returncode == 0 else ""
+    description = desc_result.stdout.strip()[:500] if desc_result.returncode == 0 else ""
 
     return {
         "transcript": transcript_text,
-        "description": description[:500] if description else "",
+        "description": description,
         "url": req.url
     }
 ```
